@@ -1,7 +1,22 @@
 import requests
 import json
 import re
+import time
 from urllib.parse import quote
+
+# Mekanisme Penembus Error 503 (Retry System)
+def safe_request(url, headers, timeout=15, retries=3, delay=3):
+    for i in range(retries):
+        try:
+            res = requests.get(url, headers=headers, timeout=timeout)
+            if res.status_code == 200:
+                return res
+            elif res.status_code == 503:
+                print(f"    [!] Server Error 503 (Sibuk). Mencoba kembali dalam {delay} detik... ({i+1}/{retries})")
+                time.sleep(delay)
+        except Exception:
+            time.sleep(delay)
+    return None
 
 def main():
     print("Sedang mengambil data dari portal...")
@@ -9,12 +24,18 @@ def main():
     # ========================================================
     # 1. ATUR KREDENSIAL PORTAL ANDA DI SINI
     # ========================================================
-    portal_url = "http://nxtbox.uk/c/"  # Ganti dengan URL portal asli Anda
-    mac_address = "00:1A:79:D4:70:31"                  # Ganti dengan MAC address Anda
+    portal_url = "http://nxtbox.uk/c/"  # URL portal asli Anda
+    mac_address = "00:1A:79:D4:70:31"                  # MAC address Anda
     
-    portal_url = portal_url.rstrip('/')
+    # Mendapatkan domain dasar tanpa subdirektori /c/
+    if '/c/' in portal_url:
+        base_url = portal_url.split('/c/')[0].rstrip('/')
+    else:
+        base_url = portal_url.rstrip('/')
+        
+    user_agent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stalker/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stalker/",
+        "User-Agent": user_agent,
         "Cookie": f"mac={mac_address}"
     }
 
@@ -22,62 +43,59 @@ def main():
         # ========================================================
         # 2. PROSES HANDSHAKE & AUTENTIKASI TOKEN
         # ========================================================
-        handshake_url = f"{portal_url}/server/load.php?type=stb&action=handshake"
-        req_handshake = requests.get(handshake_url, headers=headers, timeout=15)
+        handshake_url = f"{base_url}/server/load.php?type=stb&action=handshake"
+        req_handshake = safe_request(handshake_url, headers, timeout=15)
         
         token = ""
-        if req_handshake.status_code == 200:
+        if req_handshake and req_handshake.status_code == 200:
             try:
                 res_json = req_handshake.json()
                 token = res_json.get("js", {}).get("token", "")
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
+                    print("-> Autentikasi Handshake Berhasil!")
             except:
                 pass
 
         # ========================================================
-        # 3. MENGAMBIL DAFTAR KATEGORI (MENDUKUNG MULTI-ACTION: get_genres & get_categories)
+        # 3. MENGAMBIL DAFTAR KATEGORI
         # ========================================================
         category_map = {}
-        
-        # Coba cara pertama: Menggunakan get_genres (Standar Stalker IPTV)
         cat_actions = ["get_genres", "get_categories"]
         cat_loaded = False
         
         for action in cat_actions:
             if cat_loaded:
                 break
-            cat_url = f"{portal_url}/server/load.php?type=itv&action={action}"
+            cat_url = f"{base_url}/server/load.php?type=itv&action={action}"
             try:
-                cat_response = requests.get(cat_url, headers=headers, timeout=15)
-                if cat_response.status_code == 200:
+                cat_response = safe_request(cat_url, headers, timeout=15)
+                if cat_response and cat_response.status_code == 200:
                     cat_data = cat_response.json()
                     cat_list = cat_data.get("js", [])
                     
-                    # Jika response dibungkus data objek lagi
                     if isinstance(cat_list, dict) and "data" in cat_list:
                         cat_list = cat_list.get("data", [])
                         
                     if isinstance(cat_list, list) and len(cat_list) > 0:
                         for cat in cat_list:
                             cat_id = str(cat.get("id", cat.get("number", "")))
-                            # Mengambil nama folder dari key 'title' atau 'name'
                             cat_name = cat.get("title", cat.get("name", "")).strip()
                             if cat_id and cat_name:
                                 category_map[cat_id] = cat_name
                         print(f"Berhasil memuat {len(category_map)} kategori via '{action}'.")
                         cat_loaded = True
-            except Exception as e:
-                print(f"Gagal memuat via {action}, mencoba fallback berikutnya...")
+            except:
+                pass
 
         # ========================================================
         # 4. REQUEST SELURUH DAFTAR CHANNEL LIVE
         # ========================================================
-        channel_url = f"{portal_url}/server/load.php?type=itv&action=get_all_channels"
-        response = requests.get(channel_url, headers=headers, timeout=15)
+        channel_url = f"{base_url}/server/load.php?type=itv&action=get_all_channels"
+        response = safe_request(channel_url, headers, timeout=18)
         
-        if response.status_code != 200:
-            print(f"Gagal memuat daftar channel. Status kode: {response.status_code}")
+        if not response or response.status_code != 200:
+            print(f"Gagal memuat daftar channel.")
             return
             
         data = response.json()
@@ -93,52 +111,78 @@ def main():
         # 5. BANGUN PLAYLIST M3U DENGAN COCOK FOLDER KATEGORI & LOGO
         # ========================================================
         m3u_content = "#EXTM3U\n"
+        count = 0
         
         for ch in channels:
+            if not isinstance(ch, dict):
+                continue
+                
             name = ch.get("name", "Unknown Channel").strip()
-            ch_id = ch.get("id", "")
+            cmd = ch.get("cmd", "")
+            ch_id = str(ch.get("id", "")).strip()
             
-            # --- DETEKSI KUNCI ID KATEGORI PADA DATA CHANNEL ---
-            # Menguji semua kemungkinan variabel pencocokan kategori di database Stalker
+            # A. FILTER ELIMINASI KONTEN VOD / MOVIE
+            if str(ch.get('is_vodi', '0')) == '1':
+                continue
+            if any(x in str(cmd).lower() for x in ['kinopoisk:', 'vclub:', 'pvr:', 'movie:', 'vclub_info:']):
+                continue
+            
+            # Pencocokan Kategori
             ch_cat_id = ""
             for key in ["tv_genre_id", "tvg_id", "category_id", "ch_id"]:
                 if key in ch and ch.get(key):
                     ch_cat_id = str(ch.get(key))
                     break
             
-            # Tentukan nama folder, jika ID cocok, ambil dari map. Jika tidak, gunakan nama asal
-            group_title = category_map.get(ch_cat_id, "Lainnya")
+            group_title = category_map.get(ch_cat_id, ch.get('tv_genre_name', '').strip())
             
-            # Memproses Link Streaming
-            cmd = ch.get("cmd", "")
-            stream_url = ""
-            if "http" in cmd:
-                match = re.search(r'(https?://[^\s"\']+)', cmd)
-                stream_url = match.group(1) if match else cmd
-            else:
-                stream_url = f"{portal_url}/itv/{ch_id}"
+            # Penyelamatan cadangan kategori jika data genre kosong (Akibat 503)
+            if not group_title or group_title == "Lainnya":
+                country_match = re.search(r'^[\[\(\]?([A-Za-z]{2,3})[\]\)]?', name)
+                if country_match:
+                    group_title = f"{country_match.group(1).upper()} - Live TV"
+                else:
+                    group_title = "Live TV General"
+                    
+            if any(keyword in group_title.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
+                continue
 
-            # Memproses Logo dari data Mac Portal dengan format nama file
+            # B. STRUKTUR UTAMA RESOLUSI LINK STREAM (ANTI-LOCALHOST)
+            clean_cmd = str(cmd).replace('\\', '').strip()
+            stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
+            
+            if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
+                stream_id = ch_id
+            
+            # Memaksa pembuatan tautan sesuai target spesifik nxtbox Anda
+            stream_url = f"{base_url}/play/live.php?mac={mac_address}&stream={stream_id}&extension=ts"
+
+            # C. MEMPROSES LOGO SALURAN
             logo_file = ch.get("logo", ch.get("tvg_logo", ch.get("icon", "")))
             logo_url = ""
             
             if logo_file:
-                if logo_file.startswith("http"):
-                    logo_url = logo_file
+                logo_str = str(logo_file).strip()
+                if logo_str.startswith("http"):
+                    logo_url = logo_str
                 else:
-                    logo_file_clean = logo_file.lstrip('/')
-                    logo_url = f"{portal_url}/misc/logos/{logo_file_clean}"
+                    logo_file_clean = logo_str.lstrip('/')
+                    if not any(logo_file_clean.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif']):
+                        logo_file_clean += '.png'
+                    logo_url = f"{base_url}/misc/logos/320/{logo_file_clean}"
             else:
                 encoded_name = quote(name)
                 logo_url = f"https://ui-avatars.com{encoded_name}&background=random&color=fff&size=256&font-size=0.35"
 
+            safe_name = name.replace('"', "'")
+            safe_group = group_title.replace('"', "'")
+
             # Tulis metadata ke baris M3U
-            m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{name}" tvg-logo="{logo_url}" group-title="{group_title}",{name}\n'
-            
-            # Tambahkan konfigurasi pembacaan MAC & User agent untuk OTT Navigator
-            m3u_content += f'#EXTVLCOPT:http-user-agent={headers["User-Agent"]}\n'
+            m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
+            m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
             m3u_content += f'#EXTVLCOPT:http-cookie=mac={mac_address}\n'
             m3u_content += f'{stream_url}\n'
+            count += 1
 
         # ========================================================
         # 6. SIMPAN OUTPUT KE FILE PLAYLIST.M3U
@@ -146,7 +190,7 @@ def main():
         with open("playlist.m3u", "w", encoding="utf-8") as file:
             file.write(m3u_content)
 
-        print("Proses Berhasil! Folder kategori dan logo telah dipetakan ulang dengan benar.")
+        print(f"Proses Berhasil! Berhasil mengunci {count} saluran Live TV ke file 'playlist.m3u'.")
 
     except Exception as e:
         print(f"Terjadi kegagalan pemrosesan data: {e}")
