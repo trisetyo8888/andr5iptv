@@ -21,7 +21,7 @@ if not lines:
 
 print(f"Membaca {len(lines)} akun MAC Portal dari file...")
 
-# Fungsi Helper untuk menembus Error 503 dengan sistem jeda waktu (Retry Mechanism)
+# Mekanisme Penembus Error 503 (Retry System)
 def safe_request(url, headers, timeout=15, retries=3, delay=3):
     for i in range(retries):
         try:
@@ -29,9 +29,9 @@ def safe_request(url, headers, timeout=15, retries=3, delay=3):
             if res.status_code == 200:
                 return res
             elif res.status_code == 503:
-                print(f"    [!] Server mengembalikan Error 503 (Sibuk). Mencoba kembali dalam {delay} detik... ({i+1}/{retries})")
+                print(f"    [!] Server Error 503 (Sibuk). Mencoba kembali dalam {delay} detik... ({i+1}/{retries})")
                 time.sleep(delay)
-        except Exception:
+        except Exception as e:
             time.sleep(delay)
     return None
 
@@ -46,10 +46,9 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
-    # Ekstraksi Base URL yang aman (Konversi dari objek list ke string asli)
+    # FIX FIX FIX: Normalisasi string Base URL yang benar dan anti-crash
     if '/c/' in PORTAL_URL:
-        parts = PORTAL_URL.split('/c/')
-        base_url = parts[0].rstrip('/')
+        base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
         base_url = PORTAL_URL.rstrip('/')
         
@@ -64,132 +63,134 @@ for index, account in enumerate(lines, start=1):
         'Connection': 'keep-alive'
     }
     
-    # 1. Handshake Token
-    handshake_url = f"{api_url}?type=stb&action=handshake&token="
-    response = safe_request(handshake_url, headers, timeout=12)
-    token = ""
-    
-    if response and response.status_code == 200:
-        try:
-            token = response.json().get('js', {}).get('token', '')
-            if token:
-                headers['Authorization'] = f"Bearer {token}"
-                print("-> Autentikasi Handshake Berhasil!")
-        except Exception:
-            pass
-
-    # 2. Tarik Kamus Kategori (Dengan proteksi anti-503)
-    genres_url = f"{api_url}?type=itv&action=get_genres"
-    genre_mapping = {}
-    genres_res = safe_request(genres_url, headers, timeout=10)
-    if genres_res and genres_res.status_code == 200:
-        try:
-            genres_data = genres_res.json().get('js', [])
-            if isinstance(genres_data, list):
-                for genre in genres_data:
-                    if isinstance(genre, dict) and 'id' in genre and 'title' in genre:
-                        genre_mapping[str(genre['id'])] = str(genre['title']).strip()
-        except Exception:
-            pass
-
-    # 3. Tarik Data Saluran
-    channels_url = f"{api_url}?type=itv&action=get_all_channels"
-    res = safe_request(channels_url, headers, timeout=18)
-    if not res:
-        print("-> Gagal total menarik data siaran karena Server Error 503 berkepanjangan.")
-        continue
-        
-    raw_text = res.text
-    count = 0
-
-    # METODE 1: Parsing JSON
     try:
-        data = json.loads(raw_text)
-        channels_list = data.get('js', [])
+        # 1. Langkah Handshake Token
+        handshake_url = f"{api_url}?type=stb&action=handshake&token="
+        response = safe_request(handshake_url, headers, timeout=12)
+        token = ""
         
-        if isinstance(channels_list, dict):
-            channels_list = list(channels_list.values())
-            
-        if isinstance(channels_list, list) and len(channels_list) > 0:
-            for ch in channels_list:
-                if not isinstance(ch, dict):
-                    continue
-                    
-                name = ch.get('name', 'Unknown Channel').strip()
-                cmd = ch.get('cmd', '')
-                ch_id = str(ch.get('id', '')).strip()
-                logo = ch.get('logo', '')
-                
-                # Filter Konten VOD / Movie
-                if str(ch.get('is_vodi', '0')) == '1':
-                    continue
-                if any(x in str(cmd).lower() for x in ['kinopoisk:', 'vclub:', 'pvr:', 'movie:']):
-                    continue
-                
-                # --- STRATEGI PENYELAMATAN GENRE GRUP-TITLE MALFUNGSI ---
-                category_id = str(ch.get('category_id', ''))
-                ch_group = ""
-                
-                # Coba ambil dari kamus server
-                if category_id in genre_mapping:
-                    ch_group = genre_mapping[category_id]
-                
-                # Jika kosong, cari dari data alternatif bawaan json
-                if not ch_group:
-                    ch_group = ch.get('tv_genre_name', '').strip()
-                
-                # JIKA KEDUA METODE DI ATAS GAGAL TOTAL (Penyelamatan Berdasarkan Identitas Nama Channel)
-                if not ch_group or ch_group == f'Portal_{index}':
-                    # Ekstrak penanda negara seperti (TR), [AR], (ARABIC), UK:, dll.
-                    country_match = re.search(r'^[\[\(\]?([A-Za-z]{2,8})[\]\)]?', name)
-                    if country_match:
-                        ch_group = f"{country_match.group(1).upper()} - Live TV"
-                    else:
-                        ch_group = "Live TV General"
-                
-                # Penyaringan akhir kata kunci VOD agar tidak lolos
-                if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
-                    continue
-
-                # Pembongkaran Localhost URL secara paksa
-                clean_cmd = str(cmd).replace('\\', '').strip()
-                stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
-                
-                if not stream_id or len(stream_id) > 10:
-                    stream_id = ch_id
-                
+        if response and response.status_code == 200:
+            try:
+                token = response.json().get('js', {}).get('token', '')
                 if token:
-                    stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&token={token}"
-                else:
-                    stream_url = f"{base_url}/live/{MAC_ADDRESS}/555/{stream_id}.ts"
+                    headers['Authorization'] = f"Bearer {token}"
+                    print("-> Autentikasi Handshake Berhasil!")
+            except Exception:
+                pass
+
+        # 2. Tarik Kamus Kategori (Genre)
+        genres_url = f"{api_url}?type=itv&action=get_genres"
+        genre_mapping = {}
+        genres_res = safe_request(genres_url, headers, timeout=10)
+        if genres_res and genres_res.status_code == 200:
+            try:
+                genres_data = genres_res.json().get('js', [])
+                if isinstance(genres_data, list):
+                    for genre in genres_data:
+                        if isinstance(genre, dict) and 'id' in genre and 'title' in genre:
+                            genre_mapping[str(genre['id'])] = str(genre['title']).strip()
+            except Exception:
+                pass
+
+        # 3. Tarik Data Utama Saluran TV
+        channels_url = f"{api_url}?type=itv&action=get_all_channels"
+        res = safe_request(channels_url, headers, timeout=18)
+        if not res:
+            print("-> Gagal mengambil siaran (Server offline / Error 503 permanen).")
+            continue
+            
+        raw_text = res.text
+        count = 0
+
+        # METODE 1: Parsing JSON Resmi
+        try:
+            data = json.loads(raw_text)
+            channels_list = data.get('js', [])
+            
+            if isinstance(channels_list, dict):
+                channels_list = list(channels_list.values())
                 
-                # Normalisasi Logo Gambar
-                logo_url = ""
-                if logo:
-                    logo_str = str(logo).strip()
-                    if logo_str.startswith('http'):
-                        logo_url = logo_str
+            if isinstance(channels_list, list) and len(channels_list) > 0:
+                for ch in channels_list:
+                    if not isinstance(ch, dict):
+                        continue
+                        
+                    name = ch.get('name', 'Unknown Channel').strip()
+                    cmd = ch.get('cmd', '')
+                    ch_id = str(ch.get('id', '')).strip()
+                    logo = ch.get('logo', '')
+                    
+                    # A. Filter Eliminasi Konten VOD / Movie
+                    if str(ch.get('is_vodi', '0')) == '1':
+                        continue
+                    if any(x in str(cmd).lower() for x in ['kinopoisk:', 'vclub:', 'pvr:', 'movie:']):
+                        continue
+                    
+                    # B. Penentuan Kategori Grup (Penyelamatan otomatis jika get_genres gagal / 503)
+                    category_id = str(ch.get('category_id', ''))
+                    ch_group = ""
+                    
+                    if category_id in genre_mapping:
+                        ch_group = genre_mapping[category_id]
+                    if not ch_group:
+                        ch_group = ch.get('tv_genre_name', '').strip()
+                        
+                    # Backup cerdas: Deteksi inisial negara dari nama channel (misal: "(TR) TRT 1" -> "TR - Live TV")
+                    if not ch_group or ch_group == f'Portal_{index}':
+                        country_match = re.search(r'^[\[\(\]?([A-Za-z]{2,3})[\]\)]?', name)
+                        if country_match:
+                            ch_group = f"{country_match.group(1).upper()} - Live TV"
+                        else:
+                            ch_group = "Live TV General"
+                    
+                    if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
+                        continue
+
+                    # C. Resolusi Link Stream (Menghilangkan total localhost internal)
+                    clean_cmd = str(cmd).replace('\\', '').strip()
+                    stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
+                    
+                    if not stream_id or len(stream_id) > 10:
+                        stream_id = ch_id
+                    
+                    # Format URL Direct Bypass yang kompatibel untuk Smart TV & HP
+                    if token:
+                        stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&token={token}"
                     else:
-                        if not any(logo_str.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif']):
-                            logo_str += '.png'
-                        logo_url = f"{base_url}/misc/logos/320/{logo_str}"
-                
-                safe_name = name.replace('"', "'")
-                safe_group = ch_group.replace('"', "'")
-                
-                m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
-                m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
-                m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
-                m3u_content += f'{stream_url}\n'
-                count += 1
-    except Exception:
-        pass
+                        stream_url = f"{base_url}/live/{MAC_ADDRESS}/555/{stream_id}.ts"
+                    
+                    # D. Struktur URL Gambar Logo
+                    logo_url = ""
+                    if logo:
+                        logo_str = str(logo).strip()
+                        if logo_str.startswith('http'):
+                            logo_url = logo_str
+                        else:
+                            if not any(logo_str.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif']):
+                                logo_str += '.png'
+                            logo_url = f"{base_url}/misc/logos/320/{logo_str}"
+                    
+                    safe_name = name.replace('"', "'")
+                    safe_group = ch_group.replace('"', "'")
+                    
+                    # Kompilasi Baris M3U Rapat Sesuai Standar Player
+                    m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
+                    m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
+                    m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
+                    m3u_content += f'{stream_url}\n'
+                    count += 1
+        except Exception as json_err:
+            pass
 
-    print(f"-> Sukses mengekstrak {count} Live TV channel dari portal ini.")
-    total_all_channels += count
+        print(f"-> Sukses mengekstrak {count} Live TV channel.")
+        total_all_channels += count
 
-# Simpan sebagai playlist.m3u
+    except Exception as portal_err:
+        print(f"-> Gagal memproses portal karena: {portal_err}")
+        continue
+
+# Simpan hasil akhir ke file playlist.m3u
 with open('playlist.m3u', 'w', encoding='utf-8') as f:
     f.write(m3u_content)
 
-print(f"\nSelesai! File 'playlist.m3u' hasil rekonstruksi lokal berhasil disimpan.")
+print(f"\nSelesai! Total {total_all_channels} channel Live TV berhasil dikunci ke dalam file 'playlist.m3u'.")
