@@ -1,46 +1,34 @@
-name: Update IPTV Playlist
+name: Perbarui MAC Portal Otomatis
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Otomatis berjalan setiap 6 jam
-  workflow_dispatch: # Mengaktifkan tombol manual "Run workflow" di tab Actions
+    - cron: '0 */6 * * *'
+  workflow_dispatch: 
 
 jobs:
-  build:
+  update-link:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-    # PERBAIKAN MUTLAK: Menggunakan repositori setup-python yang resmi dan benar
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.x'
 
-    - name: Install Dependencies
+    - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install requests
 
-    - name: Run Scraper Script
-      run: python portal.py # GANTI dengan nama file python Anda (misal: main.py atau scraper.py)
+    - name: Run update script
+      run: python update_portal.py
 
-    - name: Commit and Push Changes
+    - name: Commit and Push changes
       run: |
         git config --global user.name "github-actions[bot]"
-        git config --global user.email "41898282+github-actions[bot]@://github.com"
-        
-        # Daftarkan file playlist.m3u ke dalam pelacakan Git
-        git add playlist.m3u
-        
-        # Validasi perubahan konten sebelum melakukan push
-        if git diff --staged --quiet; then
-          echo "Konten playlist masih sama dengan versi sebelumnya. Melewati commit."
-        else
-          git commit -m "Otomatis memperbarui playlist.m3u [Live TV Only]"
-          git push origin HEAD:${{ github.ref_name }}
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        git config --global user.email "github-actions[bot]@://github.com"
+        git add Portal.txt playlist.m3u || true
+        git diff-index --quiet HEAD || git commit -m "Otomatis: Perbarui berkas playlist M3U"
+        git push
