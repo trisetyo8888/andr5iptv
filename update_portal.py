@@ -31,6 +31,7 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
+    # Bersihkan /c/ di ujung URL untuk mendapatkan domain utama server
     if '/c/' in PORTAL_URL:
         base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
@@ -48,7 +49,7 @@ for index, account in enumerate(lines, start=1):
     }
     
     try:
-        # 1. Handshake Token Awal
+        # 1. Handshake Token
         handshake_url = f"{api_url}?type=stb&action=handshake&token="
         response = requests.get(handshake_url, headers=headers, timeout=12)
         token = ""
@@ -110,22 +111,18 @@ for index, account in enumerate(lines, start=1):
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # --- LOGIKA RESOLUSI LIVE STREAM BARU (RESOLVE LANGSUNG DARI SERVER) ---
-                    stream_url = ""
+                    # --- STRATEGI ANTI-LOCALHOST PERBAIKAN RADIKAL ---
                     clean_cmd = str(cmd).replace('\\', '').strip()
+                    stream_url = ""
                     
-                    # Mintalah URL stream yang matang ke server menggunakan action=create_link
+                    # Coba minta link via API resmi terlebih dahulu
                     if token and clean_cmd:
                         try:
-                            # Melakukan request langsung untuk memecah link internal
                             link_req_url = f"{api_url}?type=itv&action=create_link&cmd={requests.utils.quote(clean_cmd)}"
-                            link_res = requests.get(link_req_url, headers=headers, timeout=8)
+                            link_res = requests.get(link_req_url, headers=headers, timeout=6)
                             if link_res.status_code == 200:
-                                # Server akan mengembalikan URL murni di dalam field 'result' atau 'js'
                                 res_json = link_res.json()
                                 js_data = res_json.get('js', {})
-                                
-                                # Mengambil tautan matang (biasanya http://domain:port/live/id...)
                                 raw_resolved_url = ""
                                 if isinstance(js_data, dict):
                                     raw_resolved_url = js_data.get('cmd', '') or res_json.get('result', '')
@@ -138,16 +135,22 @@ for index, account in enumerate(lines, start=1):
                                     if link_match:
                                         stream_url = link_match.group(1).replace('"', '').replace("'", "")
                         except Exception:
-                            pass # Jika gagal melakukan resolve langsung, gunakan fallback di bawah
+                            pass
 
-                    # Jalur Fallback Utama jika resolve dinamis gagal atau localhost terdeteksi
+                    # Ekstrak ID Stream dari perintah (misal dari "ffrt http://localhost/ch/5417_" -> diambil "5417")
+                    stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
+                    if not stream_id or len(stream_id) > 10 or not stream_id.isalnum():
+                        stream_id = ch_id
+
+                    # JIKA HASILNYA MASIH LOCALHOST ATAU KOSONG, PAKSA RE-WRITE STRUKTUR URL PORTAL
                     if not stream_url or "localhost" in stream_url:
-                        stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
-                        if not stream_id or len(stream_id) > 10:
-                            stream_id = ch_id
-                        stream_url = f"{base_url}/live/{MAC_ADDRESS}/555/{stream_id}.ts"
-                    
-                    # URL Logo
+                        # METODE UTAMA BYPASS: Struktur URL Pemutar Portal Langsung yang Valid
+                        if token:
+                            stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&token={token}"
+                        else:
+                            stream_url = f"{base_url}/live/{MAC_ADDRESS}/555/{stream_id}.ts"
+
+                    # Ekstraksi URL Gambar Logo
                     logo_url = ""
                     if logo:
                         logo_str = str(logo).strip()
@@ -161,11 +164,13 @@ for index, account in enumerate(lines, start=1):
                     safe_name = name.replace('"', "'")
                     safe_group = ch_group.replace('"', "'")
                     
-                    # Bentuk baris M3U
+                    # Menyusun Baris Playlist M3U Standar Industri
                     m3u_line = f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}"'
                     if logo_url:
                         m3u_line += f' tvg-logo="{logo_url}"'
                     m3u_line += f' group-title="{safe_group}",{name}\n'
+                    
+                    # Menyisipkan Header Agen Pengguna dan Kuki Kredensial MAC langsung di bawah info channel
                     m3u_line += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
                     m3u_line += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
                     m3u_line += f'{stream_url}\n'
@@ -174,15 +179,15 @@ for index, account in enumerate(lines, start=1):
                     count += 1
                     
         except Exception as e:
-            print(f"-> Gagal mengurai JSON: {e}")
+            print(f"-> Gagal mengurai data JSON: {e}")
 
         print(f"-> Sukses mengekstrak {count} Live TV channel.")
         total_all_channels += count
 
     except Exception as e:
-        print(f"-> Gagal memproses portal ini: {e}")
+        print(f"-> Gagal memproses portal karena masalah jaringan: {e}")
         continue
 
 with open('mac_playlist.m3u', 'w', encoding='utf-8') as f:
     f.write(m3u_content)
-print(f"\nSelesai! Total keseluruhan: {total_all_channels} channel berhasil dikumpulkan ke 'mac_playlist.m3u'.")
+print(f"\nSelesai! Berhasil mengamankan total {total_all_channels} Live TV channel tanpa localhost.")
