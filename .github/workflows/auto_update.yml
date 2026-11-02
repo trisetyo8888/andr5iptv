@@ -1,0 +1,34 @@
+name: Perbarui MAC Portal Otomatis
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch: 
+
+jobs:
+  update-link:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        pip install requests
+
+    - name: Run update script
+      run: python update_portal.py
+
+    - name: Commit and Push changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@://github.com"
+        git add Portal.txt playlist.m3u || true
+        git diff-index --quiet HEAD || git commit -m "Otomatis: Perbarui berkas playlist M3U"
+        git push
