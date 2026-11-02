@@ -1,34 +1,45 @@
-name: Perbarui MAC Portal Otomatis
+name: Update IPTV Playlist
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch: 
+    - cron: '0 */6 * * *' # Berjalan otomatis setiap 6 jam
+  workflow_dispatch: # Memungkinkan Anda menjalankan manual dari tombol 'Run workflow'
 
 jobs:
-  update-link:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/actions-setup-python@v5
       with:
-        python-version: '3.x'
+        python-version: '3.10'
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
+        python -m pip install --upgrade pip
         pip install requests
 
-    - name: Run update script
-      run: python update_portal.py
+    - name: Run Scraper Script
+      run: python nama_skrip_anda.py # GANTI dengan nama file python Anda (misal: main.py atau scraper.py)
 
-    - name: Commit and Push changes
+    - name: Commit and Push Changes
       run: |
         git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@://github.com"
-        git add Portal.txt playlist.m3u || true
-        git diff-index --quiet HEAD || git commit -m "Otomatis: Perbarui berkas playlist M3U"
-        git push
+        git config --global user.email "41898282+github-actions[bot]@://github.com"
+        
+        # Paksa Git untuk melacak file playlist.m3u yang baru dibuat
+        git add playlist.m3u
+        
+        # Periksa apakah ada perubahan nyata pada konten file sebelum melakukan push
+        if git diff --staged --quiet; then
+          echo "Tidak ada perubahan data saluran yang baru. Melewati proses upload."
+        else
+          git commit -m "Otomatis memperbarui playlist.m3u [Live TV Only]"
+          git push origin HEAD:${{ github.ref_name }}
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
