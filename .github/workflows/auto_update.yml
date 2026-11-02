@@ -2,8 +2,8 @@ name: Update IPTV Playlist
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Berjalan otomatis setiap 6 jam
-  workflow_dispatch: # Memungkinkan Anda menjalankan manual dari tombol 'Run workflow'
+    - cron: '0 */6 * * *' # Otomatis berjalan setiap 6 jam
+  workflow_dispatch: # Mengaktifkan tombol manual "Run workflow" di tab Actions
 
 jobs:
   build:
@@ -13,8 +13,9 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    # PERBAIKAN MUTLAK: Menggunakan repositori setup-python yang resmi dan benar
     - name: Set up Python
-      uses: actions/actions-setup-python@v5
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -31,12 +32,12 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@://github.com"
         
-        # Paksa Git untuk melacak file playlist.m3u yang baru dibuat
+        # Daftarkan file playlist.m3u ke dalam pelacakan Git
         git add playlist.m3u
         
-        # Periksa apakah ada perubahan nyata pada konten file sebelum melakukan push
+        # Validasi perubahan konten sebelum melakukan push
         if git diff --staged --quiet; then
-          echo "Tidak ada perubahan data saluran yang baru. Melewati proses upload."
+          echo "Konten playlist masih sama dengan versi sebelumnya. Melewati commit."
         else
           git commit -m "Otomatis memperbarui playlist.m3u [Live TV Only]"
           git push origin HEAD:${{ github.ref_name }}
