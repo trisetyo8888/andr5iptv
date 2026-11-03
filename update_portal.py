@@ -47,7 +47,7 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
-    # 1. Bersihkan URL untuk kebutuhan request internal API Python
+    # 1. Ambil domain murni string (Menjaga port :80 tetap aman)
     if '/c/' in PORTAL_URL:
         internal_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
@@ -55,29 +55,30 @@ for index, account in enumerate(lines, start=1):
         
     api_url = f"{internal_url}/server/load.php"
     
-    # 2. STRATEGI UTAMA SAKTI: Membongkar domain untuk URL output stream M3U
-    # Menghapus skema http:// atau https:// bawaan agar bisa kita pasang paksa format target Anda
+    # Normalisasi skema TLS: Port 80 dikunci ke http demi menghindari kegagalan jabat tangan paket
     domain_clean = internal_url.replace("https://", "").replace("http://", "")
-    
-    # Jika di dalam file Portal.txt Anda belum memuat port :80, kita pasang secara paksa
-    if ":" not in domain_clean:
-        domain_clean = f"{domain_clean}:80"
-        
-    # KUNCI ABSOLUT: Memaksa awal protokol menjadi https:// dan ujung port tetap ada
-    final_base_stream_url = f"https://{domain_clean}"
-    
+    if ":80" in domain_clean or "nxtbox.uk" in domain_clean.lower():
+        if ":80" not in domain_clean:
+            domain_clean = f"{domain_clean}:80"
+        final_base_stream_url = f"http://{domain_clean}"
+    else:
+        final_base_stream_url = f"https://{domain_clean}" if "https" in PORTAL_URL else f"http://{domain_clean}"
+            
+    # Identitas perangkat keras tiruan lengkap untuk menembus proteksi token
+    fake_stbid  = "00000000000000000000000000000000"
     user_agent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stalker/"
+    
     headers = {
         "User-Agent": user_agent,
-        "Cookie": f"mac={MAC_ADDRESS}; stb_lang=en; timezone=Europe%2FParis;",
+        "Cookie": f"mac={MAC_ADDRESS}; stb_lang=en; timezone=Europe%2FParis; stbid={fake_stbid};",
         "Referer": f"{internal_url}/c/",
         "Accept": "*/*",
         "Connection": "keep-alive"
     }
 
     try:
-        # 3. Langkah Handshake Token Resmi
-        handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid=00000000000000000000000000000000"
+        # 2. Langkah Handshake Resmi untuk Mengamankan Token Sesi Aktif
+        handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid={fake_stbid}"
         response = safe_request(handshake_url, headers, timeout=12)
         token = ""
         
@@ -86,11 +87,14 @@ for index, account in enumerate(lines, start=1):
                 token = response.json().get('js', {}).get('token', '')
                 if token:
                     headers['Authorization'] = f"Bearer {token}"
-                    print("-> Autentikasi Handshake Berhasil!")
+                    print(f"-> Autentikasi Berhasil! Token Sesi Aktif: {token[:8]}...")
             except Exception:
                 pass
 
-        # 4. Tarik Kamus Kategori (Genre)
+        if not token:
+            print("-> Peringatan: Gagal mendapatkan token dinamis. Mencoba menggunakan rute standar...")
+
+        # 3. Tarik Kamus Kategori (Genre)
         genres_url = f"{api_url}?type=itv&action=get_genres"
         genre_mapping = {}
         genres_res = safe_request(genres_url, headers, timeout=10)
@@ -104,7 +108,7 @@ for index, account in enumerate(lines, start=1):
             except Exception:
                 pass
 
-        # 5. Tarik Data Utama Saluran TV
+        # 4. Tarik Data Utama Saluran TV
         channels_url = f"{api_url}?type=itv&action=get_all_channels"
         res = safe_request(channels_url, headers, timeout=18)
         if not res:
@@ -114,7 +118,6 @@ for index, account in enumerate(lines, start=1):
         raw_text = res.text
         count = 0
 
-        # METODE PARSING JSON UTAMA
         try:
             data = json.loads(raw_text)
             channels_list = []
@@ -161,15 +164,21 @@ for index, account in enumerate(lines, start=1):
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # 6. RESOLUSI EKSTRAKSI ID STREAM
+                    # 5. RESOLUSI EKSTRAKSI ID STREAM
                     clean_cmd = str(cmd).replace('\\', '').strip()
                     stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
                     
                     if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
                         stream_id = ch_id
                     
-                    # MENGUNCI FORMAT RE-WRITE PILIHAN ANDA SECARA MUTLAK (HTTPS + PORT 80 KONTROL)
-                    stream_url = f"{final_base_stream_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
+                    # ========================================================
+                    # KUNCI UTAMA SAKTI: PENYUNTIKKAN TOKEN DINAMIS KE URL STREAM
+                    # ========================================================
+                    if token:
+                        # Melampirkan parameter token sesi aktif hasil handshake ke URL putar
+                        stream_url = f"{final_base_stream_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts&token={token}"
+                    else:
+                        stream_url = f"{final_base_stream_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
                     
                     # URL Gambar Logo
                     logo_url = ""
@@ -188,7 +197,7 @@ for index, account in enumerate(lines, start=1):
                     # Kompilasi Metadata M3U
                     m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
                     m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
-                    m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
+                    m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}; stbid={fake_stbid};\n'
                     m3u_content += f'{stream_url}\n'
                     count += 1
         except Exception as json_err:
@@ -201,8 +210,8 @@ for index, account in enumerate(lines, start=1):
         print(f"-> Gagal memproses portal karena: {e}")
         continue
 
-# Simpan hasil akhir ke berkas playlist.m3u sesuai pelacakan Git
+# Simpan hasil akhir ke berkas playlist.m3u
 with open('playlist.m3u', 'w', encoding='utf-8') as f:
     f.write(m3u_content)
 
-print(f"\nSelesai! Berhasil membuat 'playlist.m3u' dengan tautan stream HTTPS:80 murni.")
+print(f"\nSelesai! Berhasil membuat 'playlist.m3u' dengan suntikan Token Sesi Aktif.")
