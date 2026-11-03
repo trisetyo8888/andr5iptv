@@ -22,6 +22,7 @@ if not lines:
 
 print(f"Membaca {len(lines)} akun MAC Portal dari file...")
 
+# Fungsi Helper Penembus Error 503 dengan Sistem Jeda (Auto-Retry)
 def safe_request(url, headers, timeout=15, retries=3, delay=3):
     for i in range(retries):
         try:
@@ -29,7 +30,7 @@ def safe_request(url, headers, timeout=15, retries=3, delay=3):
             if res.status_code == 200:
                 return res
             elif res.status_code == 503:
-                print(f"    [!] Server Error 503 (Sibuk). Mencoba kembali dalam {delay} ... ({i+1}/{retries})")
+                print(f"    [!] Server Error 503 (Sibuk). Mencoba kembali dalam {delay} detik... ({i+1}/{retries})")
                 time.sleep(delay)
         except Exception:
             time.sleep(delay)
@@ -37,7 +38,7 @@ def safe_request(url, headers, timeout=15, retries=3, delay=3):
 
 for index, account in enumerate(lines, start=1):
     if '|' not in account:
-        print(f"Skipping baris {index}: Format salah")
+        print(f"Skipping baris {index}: Format salah (Gunakan URL|MAC)")
         continue
         
     PORTAL_URL, MAC_ADDRESS = account.split('|', 1)
@@ -46,35 +47,37 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
-    # Menjaga port :80 tetap utuh dengan konversi string murni
+    # 1. Bersihkan URL untuk kebutuhan request internal API Python
     if '/c/' in PORTAL_URL:
-        base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
+        internal_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
-        base_url = PORTAL_URL.rstrip('/')
+        internal_url = PORTAL_URL.rstrip('/')
         
-    api_url = f"{base_url}/server/load.php"
+    api_url = f"{internal_url}/server/load.php"
     
-    # KUNCI TEMBUS 463: Pemalsuan Tanda Tangan Dekoder (Device Signature)
-    # nxtbox mewajibkan serial dan stbid untuk meloloskan MAC Address
-    fake_serial = "02145DF6D90EC"
-    fake_stbid  = "F069CC1DCD4F85D195FBF8A91CFCF5CBAC39711F431F1A64061020E0313E9A76"
+    # 2. STRATEGI UTAMA SAKTI: Membongkar domain untuk URL output stream M3U
+    # Menghapus skema http:// atau https:// bawaan agar bisa kita pasang paksa format target Anda
+    domain_clean = internal_url.replace("https://", "").replace("http://", "")
+    
+    # Jika di dalam file Portal.txt Anda belum memuat port :80, kita pasang secara paksa
+    if ":" not in domain_clean:
+        domain_clean = f"{domain_clean}:80"
+        
+    # KUNCI ABSOLUT: Memaksa awal protokol menjadi https:// dan ujung port tetap ada
+    final_base_stream_url = f"https://{domain_clean}"
     
     user_agent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stalker/"
-    
-    # Menyuntikkan paket enkripsi lengkap ke dalam kuki penjelajah
-    cookie_str = f"mac={MAC_ADDRESS}; stb_lang=en; timezone=Europe%2FParis; serial={fake_serial}; stbid={fake_stbid};"
-    
     headers = {
         "User-Agent": user_agent,
-        "Cookie": cookie_str,
-        "Referer": f"{base_url}/c/",
+        "Cookie": f"mac={MAC_ADDRESS}; stb_lang=en; timezone=Europe%2FParis;",
+        "Referer": f"{internal_url}/c/",
         "Accept": "*/*",
         "Connection": "keep-alive"
     }
 
     try:
-        # 1. Langkah Handshake Resmi dengan Token Enkripsi Komplit
-        handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid={fake_stbid}"
+        # 3. Langkah Handshake Token Resmi
+        handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid=00000000000000000000000000000000"
         response = safe_request(handshake_url, headers, timeout=12)
         token = ""
         
@@ -87,7 +90,7 @@ for index, account in enumerate(lines, start=1):
             except Exception:
                 pass
 
-        # 2. Tarik Kamus Kategori (Genre)
+        # 4. Tarik Kamus Kategori (Genre)
         genres_url = f"{api_url}?type=itv&action=get_genres"
         genre_mapping = {}
         genres_res = safe_request(genres_url, headers, timeout=10)
@@ -101,7 +104,7 @@ for index, account in enumerate(lines, start=1):
             except Exception:
                 pass
 
-        # 3. Tarik Data Utama Saluran TV
+        # 5. Tarik Data Utama Saluran TV
         channels_url = f"{api_url}?type=itv&action=get_all_channels"
         res = safe_request(channels_url, headers, timeout=18)
         if not res:
@@ -111,6 +114,7 @@ for index, account in enumerate(lines, start=1):
         raw_text = res.text
         count = 0
 
+        # METODE PARSING JSON UTAMA
         try:
             data = json.loads(raw_text)
             channels_list = []
@@ -133,55 +137,58 @@ for index, account in enumerate(lines, start=1):
                     ch_id = str(ch.get('id', '')).strip()
                     logo = ch.get('logo', '')
                     
-                    # A. Filter Eliminasi Konten VOD / Movie
+                    # Filter Konten VOD / Movie
                     if str(ch.get('is_vodi', '0')) == '1':
                         continue
                     if any(x in str(cmd).lower() for x in ['kinopoisk:', 'vclub:', 'pvr:', 'movie:']):
                         continue
                     
-                    # B. Penentuan Kategori Grup
+                    # Pengelompokan Kategori Grup
                     category_id = str(ch.get('category_id', ''))
                     ch_group = genre_mapping.get(category_id, ch.get('tv_genre_name', '').strip())
                         
                     if not ch_group or ch_group == f'Portal_{index}' or ch_group == 'Lainnya':
-                        clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
-                        if clean_name_for_match:
-                            first_word = clean_name_for_match[0].upper()
-                            ch_group = f"{first_word} - Live TV" if len(first_word) <= 4 else "Live TV General"
-                        else:
+                        try:
+                            clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
+                            if clean_name_for_match and len(clean_name_for_match) >= 1:
+                                first_word = clean_name_for_match[0].upper()
+                                ch_group = f"{first_word} - Live TV" if len(first_word) <= 4 else "Live TV General"
+                            else:
+                                ch_group = "Live TV General"
+                        except Exception:
                             ch_group = "Live TV General"
                     
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # C. RE-WRITE TOTAL MENJADI FORMAT TARGET ASLI
+                    # 6. RESOLUSI EKSTRAKSI ID STREAM
                     clean_cmd = str(cmd).replace('\\', '').strip()
                     stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
                     
                     if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
                         stream_id = ch_id
                     
-                    stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
+                    # MENGUNCI FORMAT RE-WRITE PILIHAN ANDA SECARA MUTLAK (HTTPS + PORT 80 KONTROL)
+                    stream_url = f"{final_base_stream_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
                     
-                    # D. URL Gambar Logo
+                    # URL Gambar Logo
                     logo_url = ""
                     if logo:
                         logo_str = str(logo).strip()
-                        logo_url = logo_str if logo_str.startswith('http') else f"{base_url}/misc/logos/320/{logo_str.lstrip('/')}"
+                        logo_url = logo_str if logo_str.startswith('http') else f"{final_base_stream_url}/misc/logos/320/{logo_str.lstrip('/')}"
                         if not any(logo_url.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif']):
                             logo_url += '.png'
                     else:
-                        logo_url = f"https://ui-avatars.com{quote(name)}&background=random&color=fff&size=256"
+                        encoded_name = quote(name)
+                        logo_url = f"https://ui-avatars.com{encoded_name}&background=random&color=fff&size=256"
                     
                     safe_name = name.replace('"', "'")
                     safe_group = ch_group.replace('"', "'")
                     
                     # Kompilasi Metadata M3U
                     m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
-                    
-                    # SUNTIKAN SAKTI UNTUK PLAYER: Memaksa aplikasi IPTV mengirim data penyamaran lengkap ke server
                     m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
-                    m3u_content += f'#EXTVLCOPT:http-cookie={cookie_str}\n'
+                    m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
                     m3u_content += f'{stream_url}\n'
                     count += 1
         except Exception as json_err:
@@ -194,7 +201,8 @@ for index, account in enumerate(lines, start=1):
         print(f"-> Gagal memproses portal karena: {e}")
         continue
 
+# Simpan hasil akhir ke berkas playlist.m3u sesuai pelacakan Git
 with open('playlist.m3u', 'w', encoding='utf-8') as f:
     f.write(m3u_content)
 
-print(f"\nSelesai! File 'playlist.m3u' pembongkar proteksi 463 berhasil diterbitkan.")
+print(f"\nSelesai! Berhasil membuat 'playlist.m3u' dengan tautan stream HTTPS:80 murni.")
