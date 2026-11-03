@@ -1,6 +1,8 @@
+import os
+import sys
 import requests
-import json
 import re
+import json
 import time
 from urllib.parse import quote
 
@@ -36,7 +38,10 @@ def main():
     user_agent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stalker/"
     headers = {
         "User-Agent": user_agent,
-        "Cookie": f"mac={mac_address}"
+        "Cookie": f"mac={mac_address}; stb_lang=en; timezone=Europe%2FParis;",
+        "Referer": f"{base_url}/c/",
+        "Accept": "*/*",
+        "Connection": "keep-alive"
     }
 
     try:
@@ -136,12 +141,10 @@ def main():
             
             group_title = category_map.get(ch_cat_id, ch.get('tv_genre_name', '').strip())
             
-            # Penyelamatan cadangan kategori jika data grup kosong/Lainnya
+            # Penyelamatan cadangan kategori
             if not group_title or group_title == "Lainnya":
-                # PERBAIKAN: Menggunakan pengondisian string aman (bukan regex pada nama channel mentah)
-                # Mencari kode seperti (TR), [TR], dll. di depan nama
                 clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
-                if clean_name_for_match and len(clean_name_for_match[0]) >= 2 and len(clean_name_for_match[0]) <= 4:
+                if clean_name_for_match and len(clean_name_for_match) >= 1:
                     group_title = f"{clean_name_for_match[0].upper()} - Live TV"
                 else:
                     group_title = "Live TV General"
@@ -149,15 +152,9 @@ def main():
             if any(keyword in group_title.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                 continue
 
-            # B. STRUKTUR UTAMA RESOLUSI LINK STREAM (ANTI-LOCALHOST)
-            clean_cmd = str(cmd).replace('\\', '').strip()
-            stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
-            
-            if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
-                stream_id = ch_id
-            
-            # Memaksa pembuatan tautan sesuai target spesifik nxtbox Anda
-            stream_url = f"{base_url}/play/live.php?mac={mac_address}&stream={stream_id}&extension=ts"
+            # B. STRUKTUR LINK BARU: SOLUSI BYPASS ERROR 463
+            # Mengalihkan dari /play/live.php (dikecam 463) ke jalur manifes playlist asli portal
+            stream_url = f"{base_url}/playlist/live/{ch_id}.ts"
 
             # C. MEMPROSES LOGO SALURAN
             logo_file = ch.get("logo", ch.get("tvg_logo", ch.get("icon", "")))
