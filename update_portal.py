@@ -47,7 +47,9 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
-    # EKSTRAKSI BASE URL SECARA PRESISI (MENJAGA PORT :80 TETAP UTUH)
+    # ========================================================
+    # PERBAIKAN ABSOLUT: Pemotongan string Base URL yang aman dan menjaga port :80 tetap utuh
+    # ========================================================
     if '/c/' in PORTAL_URL:
         base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
@@ -136,12 +138,16 @@ for index, account in enumerate(lines, start=1):
                     if not ch_group:
                         ch_group = ch.get('tv_genre_name', '').strip()
                         
-                    # Penyelamatan cadangan kategori berbasis kode negara (Aman dari Bug Tanda Kurung)
+                    # Penyelamatan cadangan kategori berbasis nama saluran (Anti-Lainnya)
                     if not ch_group or ch_group == f'Portal_{index}' or ch_group == 'Lainnya':
                         try:
                             clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
-                            if clean_name_for_match and len(clean_name_for_match[0]) <= 4:
-                                ch_group = f"{clean_name_for_match[0].upper()} - Live TV"
+                            if clean_name_for_match and len(clean_name_for_match) >= 1:
+                                first_word = clean_name_for_match[0].upper()
+                                if len(first_word) <= 4:
+                                    ch_group = f"{first_word} - Live TV"
+                                else:
+                                    ch_group = "Live TV General"
                             else:
                                 ch_group = "Live TV General"
                         except Exception:
@@ -150,14 +156,14 @@ for index, account in enumerate(lines, start=1):
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # C. STRUKTUR KONVERSI TARGET LINK PENYIARAN ANDA
+                    # C. RE-WRITE TOTAL MENJADI FORMAT TARGET SUKSES ANDA
                     clean_cmd = str(cmd).replace('\\', '').strip()
                     stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
                     
                     if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
                         stream_id = ch_id
                     
-                    # Formulasi Link Sesuai Format Sukses Nxtbox Anda
+                    # Formulasi Link Dipaksa Keluar Meniru Pola Target Nxtbox
                     stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
                     
                     # D. Struktur URL Gambar Logo
@@ -183,8 +189,8 @@ for index, account in enumerate(lines, start=1):
                     m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
                     m3u_content += f'{stream_url}\n'
                     count += 1
-        except Exception:
-            pass
+        except Exception as json_err:
+            print(f"-> Gagal memproses struktur saluran: {json_err}")
 
         print(f"-> Sukses mengekstrak {count} Live TV channel.")
         total_all_channels += count
