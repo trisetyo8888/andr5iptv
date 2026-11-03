@@ -24,7 +24,7 @@ def main():
     # ========================================================
     # 1. ATUR KREDENSIAL PORTAL ANDA DI SINI
     # ========================================================
-    portal_url = "http://nxtbox.uk/c/"  # URL portal asli Anda
+    portal_url = "http://nxtbox.uk"  # URL portal asli Anda
     mac_address = "00:1A:79:D4:70:31"                  # MAC address Anda
     
     # Mendapatkan domain dasar tanpa subdirektori /c/
@@ -136,11 +136,13 @@ def main():
             
             group_title = category_map.get(ch_cat_id, ch.get('tv_genre_name', '').strip())
             
-            # Penyelamatan cadangan kategori jika data genre kosong (Akibat 503)
+            # Penyelamatan cadangan kategori jika data grup kosong/Lainnya
             if not group_title or group_title == "Lainnya":
-                country_match = re.search(r'^[\[\(\]?([A-Za-z]{2,3})[\]\)]?', name)
-                if country_match:
-                    group_title = f"{country_match.group(1).upper()} - Live TV"
+                # PERBAIKAN: Menggunakan pengondisian string aman (bukan regex pada nama channel mentah)
+                # Mencari kode seperti (TR), [TR], dll. di depan nama
+                clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
+                if clean_name_for_match and len(clean_name_for_match[0]) >= 2 and len(clean_name_for_match[0]) <= 4:
+                    group_title = f"{clean_name_for_match[0].upper()} - Live TV"
                 else:
                     group_title = "Live TV General"
                     
