@@ -47,11 +47,8 @@ for index, account in enumerate(lines, start=1):
     
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
-    # ========================================================
-    # KUNCI UTAMA: EKSTRAKSI BASE URL SECARA PRESISI (MENJAGA PORT :80 TETAP UTUH)
-    # ========================================================
+    # EKSTRAKSI BASE URL SECARA PRESISI (MENJAGA PORT :80 TETAP UTUH)
     if '/c/' in PORTAL_URL:
-        # Mengambil karakter sebelum '/c/' dan memastikan tidak ada trailing slash yang merusak port
         base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
     else:
         base_url = PORTAL_URL.rstrip('/')
@@ -68,7 +65,7 @@ for index, account in enumerate(lines, start=1):
     }
 
     try:
-        # 1. Langkah Handshake Token (Ditambahkan STB ID Tiruan agar Server Lolos dari Deteksi Skrip)
+        # 1. Langkah Handshake Token
         handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid=00000000000000000000000000000000"
         response = safe_request(handshake_url, headers, timeout=12)
         token = ""
@@ -93,8 +90,8 @@ for index, account in enumerate(lines, start=1):
                     for genre in genres_data:
                         if isinstance(genre, dict) and 'id' in genre and 'title' in genre:
                             genre_mapping[str(genre['id'])] = str(genre['title']).strip()
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         # 3. Tarik Data Utama Saluran TV
         channels_url = f"{api_url}?type=itv&action=get_all_channels"
@@ -139,26 +136,28 @@ for index, account in enumerate(lines, start=1):
                     if not ch_group:
                         ch_group = ch.get('tv_genre_name', '').strip()
                         
-                    # Penyelamatan cadangan kategori berbasis kode negara (Anti-Lainnya)
+                    # Penyelamatan cadangan kategori berbasis kode negara (Aman dari Bug Tanda Kurung)
                     if not ch_group or ch_group == f'Portal_{index}' or ch_group == 'Lainnya':
-                        # Pembersihan karakter kurung agar aman dari error regex unbalanced parenthesis
-                        clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
-                        if clean_name_for_match and len(clean_name_for_match[0]) <= 4:
-                            ch_group = f"{clean_name_for_match[0].upper()} - Live TV"
-                        else:
+                        try:
+                            clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
+                            if clean_name_for_match and len(clean_name_for_match[0]) <= 4:
+                                ch_group = f"{clean_name_for_match[0].upper()} - Live TV"
+                            else:
+                                ch_group = "Live TV General"
+                        except Exception:
                             ch_group = "Live TV General"
                     
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # C. STRUKTUR KONVERSI TOTAL TARGET LINK PENYIARAN ANDA
+                    # C. STRUKTUR KONVERSI TARGET LINK PENYIARAN ANDA
                     clean_cmd = str(cmd).replace('\\', '').strip()
                     stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
                     
                     if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
                         stream_id = ch_id
                     
-                    # MEMAKSA HASIL LINK AGAR PERSIS DENGAN FORMAT SUKSES NYTBOX ANDA
+                    # Formulasi Link Sesuai Format Sukses Nxtbox Anda
                     stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
                     
                     # D. Struktur URL Gambar Logo
