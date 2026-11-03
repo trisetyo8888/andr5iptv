@@ -48,7 +48,7 @@ for index, account in enumerate(lines, start=1):
     print(f"\n[{index}/{len(lines)}] Memproses: {PORTAL_URL}")
     
     # ========================================================
-    # PERBAIKAN ABSOLUT: Pemotongan string Base URL yang aman dan menjaga port :80 tetap utuh
+    # FIX FIX FIX: Normalisasi Base URL yang BENAR (Anti-Crash & Jaga Port Utuh)
     # ========================================================
     if '/c/' in PORTAL_URL:
         base_url = PORTAL_URL.split('/c/')[0].rstrip('/')
@@ -67,7 +67,7 @@ for index, account in enumerate(lines, start=1):
     }
 
     try:
-        # 1. Langkah Handshake Token
+        # 1. Langkah Handshake Token (Menyertakan STB ID Tiruan untuk menembus proteksi 512)
         handshake_url = f"{api_url}?type=stb&action=handshake&token=&stbid=00000000000000000000000000000000"
         response = safe_request(handshake_url, headers, timeout=12)
         token = ""
@@ -108,11 +108,18 @@ for index, account in enumerate(lines, start=1):
         # METODE 1: Parsing JSON Resmi
         try:
             data = json.loads(raw_text)
-            channels_list = data.get('js', [])
             
-            if isinstance(channels_list, dict):
-                channels_list = list(channels_list.values())
-                
+            # Mendeteksi berbagai variasi pembungkusan data saluran pada API Stalker
+            channels_list = []
+            if isinstance(data, dict):
+                js_content = data.get('js', [])
+                if isinstance(js_content, dict) and 'data' in js_content:
+                    channels_list = js_content.get('data', [])
+                elif isinstance(js_content, dict):
+                    channels_list = list(js_content.values())
+                elif isinstance(js_content, list):
+                    channels_list = js_content
+            
             if isinstance(channels_list, list) and len(channels_list) > 0:
                 for ch in channels_list:
                     if not isinstance(ch, dict):
@@ -138,32 +145,29 @@ for index, account in enumerate(lines, start=1):
                     if not ch_group:
                         ch_group = ch.get('tv_genre_name', '').strip()
                         
-                    # Penyelamatan cadangan kategori berbasis nama saluran (Anti-Lainnya)
+                    # Penyelamatan cadangan kategori berbasis nama saluran
                     if not ch_group or ch_group == f'Portal_{index}' or ch_group == 'Lainnya':
-                        try:
-                            clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
-                            if clean_name_for_match and len(clean_name_for_match) >= 1:
-                                first_word = clean_name_for_match[0].upper()
-                                if len(first_word) <= 4:
-                                    ch_group = f"{first_word} - Live TV"
-                                else:
-                                    ch_group = "Live TV General"
+                        clean_name_for_match = re.sub(r'[\(\)\[\]]', ' ', name).split()
+                        if clean_name_for_match:
+                            first_word = clean_name_for_match[0].upper()
+                            if len(first_word) <= 4:
+                                ch_group = f"{first_word} - Live TV"
                             else:
                                 ch_group = "Live TV General"
-                        except Exception:
+                        else:
                             ch_group = "Live TV General"
                     
                     if any(keyword in ch_group.lower() for keyword in ['vod', 'movie', 'cinema', 'film', 'series']):
                         continue
 
-                    # C. RE-WRITE TOTAL MENJADI FORMAT TARGET SUKSES ANDA
+                    # C. RE-WRITE TOTAL MENJADI FORMAT TARGET ASLI ANDA
                     clean_cmd = str(cmd).replace('\\', '').strip()
                     stream_id = clean_cmd.split('/')[-1].replace('"', '').replace("'", "").replace('_', '').strip()
                     
                     if not stream_id or len(stream_id) > 10 or not stream_id.isdigit():
                         stream_id = ch_id
                     
-                    # Formulasi Link Dipaksa Keluar Meniru Pola Target Nxtbox
+                    # Formulasi Link Sakti: Mengunci bentuk URL nxtbox yang valid
                     stream_url = f"{base_url}/play/live.php?mac={MAC_ADDRESS}&stream={stream_id}&extension=ts"
                     
                     # D. Struktur URL Gambar Logo
@@ -183,14 +187,14 @@ for index, account in enumerate(lines, start=1):
                     safe_name = name.replace('"', "'")
                     safe_group = ch_group.replace('"', "'")
                     
-                    # Kompilasi Baris Metadata M3U
+                    # Kompilasi Metadata M3U
                     m3u_content += f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{safe_name}" tvg-logo="{logo_url}" group-title="{safe_group}",{name}\n'
                     m3u_content += f'#EXTVLCOPT:http-user-agent={user_agent}\n'
                     m3u_content += f'#EXTVLCOPT:http-cookie=mac={MAC_ADDRESS}\n'
                     m3u_content += f'{stream_url}\n'
                     count += 1
         except Exception as json_err:
-            print(f"-> Gagal memproses struktur saluran: {json_err}")
+            print(f"-> Gagal memproses data JSON: {json_err}")
 
         print(f"-> Sukses mengekstrak {count} Live TV channel.")
         total_all_channels += count
@@ -199,8 +203,8 @@ for index, account in enumerate(lines, start=1):
         print(f"-> Gagal memproses portal ini karena: {e}")
         continue
 
-# Simpan hasil akhir ke file playlist.m3u
+# Simpan ke berkas playlist.m3u
 with open('playlist.m3u', 'w', encoding='utf-8') as f:
     f.write(m3u_content)
 
-print(f"\nSelesai! Total {total_all_channels} channel Live TV berhasil dikunci ke 'playlist.m3u'.")
+print(f"\nSelesai! Total {total_all_channels} channel Live TV sukses disimpan ke file 'playlist.m3u'.")
